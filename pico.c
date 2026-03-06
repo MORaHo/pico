@@ -3,102 +3,58 @@
 #define _BSD_SOURCE
 #define _GNU_SOURCE
 
-#include <sys/ioctl.h>
-#include <ctype.h>
-#include <fcntl.h>
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <termios.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <errno.h>
 #include <time.h>
+#include <ctype.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
 #include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <termios.h>
+#include <sys/ioctl.h>
+#include <sys/types.h>
+
+#include "tree.h"
+#include "config.h"
 
 /*** defines ***/
 
 #define PICO_VERSION "0.0.3"
 #define PICO_TAB_STOP 4
 #define PICO_QUIT_TIMES 3
+
 #define NUM_PADDING 6
+#define TREE_PADDING 31
 
 #define CTRL_KEY(k) ((k) & 0x1f) //bitmask the strips input to it's control key component (removes bits 6-8), so that we can map then check and map them to different behaviours.
-
-enum editorKey { //enumeration of unique values for different each key so we can pass them between functions without issue.
-    BACKSPACE = 127, //ASCII value since no escape sequence associated
-    ARROW_LEFT = 1000, //out of range for a char, so no conflict with any possible keypress, means that editorRadKey() outputs int rather than char.
-    ARROW_RIGHT,
-    ARROW_UP,
-    ARROW_DOWN,
-    DEL_KEY,
-    HOME_KEY,
-    END_KEY, 
-    PAGE_UP,
-    PAGE_DOWN,
-};
-
-enum editorHighlight { //syntax highlighting colour enum
-    HL_NORMAL = 0,
-    HL_COMMENT,
-    HL_MLCOMMENT,
-    HL_KEYWORD1,
-    HL_KEYWORD2,
-    HL_STRING,
-    HL_NUMBER,
-    HL_MATCH,
-};
 
 #define HL_HIGHLIGHT_NUMBERS (1<<0)
 #define HL_HIGHLIGHT_STRINGS (1<<1)
 
 #define COMMAND_MODE (1<<0)
-#define EDIT_MODE (1<<1)
+#define TREE_MODE (1<<1)
+#define EDIT_MODE (1<<2)
+
+#define PAGINATED (1<<0)
+#define BRANCHED (1<<3)
 
 #define COMMAND_BOOL 0
 #define SEARCH_BOOL 1
 
 /*** data ***/
 
-struct editorSyntax {
-    char *filetype;
-    char **filematch; //array of strings containing a pattern to match a filename against.
-    char **keywords;
-    char *singleline_comment_start;
-    char *multiline_comment_start;
-    char *multiline_comment_end;
-    int flags; //flag containing language-specific highlighting rules.
-};
-
-typedef struct erow {
-    int idx; //so erow, knows it's own index, allows us to check prior rows
-    int size; //size of the row
-    int rsize; //size of render row
-    char *chars; //*ab in in abuf, this is a dynamic memory buffer which we will probably use to store the text in each time.
-    char *render; //rendered text buffer
-    unsigned char *hl; //highlighted text buffer.
-    int hl_open_comment; //check whether row has open comment
-} erow; //typdef so we don't need to write struct erow
-
-struct editorConfig {
-    int cx,cy; //indexes of row, and chars buffer
-    int rx,ry; //position in the rendered buffer (we need this because tabs are only unpacked in the rendered buffer)
-    int rowoff;
-    int coloff;
-    int screenrows;
-    int screencols;
-    int numrows;
-    erow *row; //editor row, this is a pointer to a dynamic array of erow object, which each represent a row.
-    int dirty; //value which we will be treating as a boolean, but could be use to see how much has been modified.
-    char *filename;
-    char statusmsg[80];
-    char mode;
-    time_t statusmsg_time; //time the message was written so we can then delete it.
-    struct editorSyntax *syntax;
-    struct termios orig_termios;
-};
-
 struct editorConfig E;
+Folder* T;
+Page* P;
+
+int mode = COMMAND_MODE;
+int treelength;
+int saved_ry = 0;
+int saved_cy = 0;
+int paginated;
+char directory[MAX_PATH_LEN] = "./";
 
 /*** filetypes ***/
 
@@ -126,6 +82,7 @@ struct editorSyntax HLDB[] = { //Array of editorSyntax structs
 void editorSetStatusMessage(const char *fmt, ...);
 void editorRefreshScreen();
 char *editorPrompt(char *prompt, char mode_bool, void (*callback)(char *, int, int)); //callback is a generic function that passes the required inputs after, in this case we are asking a pointer to said function.
+void initEditor();
 
 /*** terminal ***/
 
@@ -740,12 +697,29 @@ void editorFind()   {
     }
 }
 
+static char *rstrstr(const char *haystack, const char *needle)
+{
+    if (*needle == '\0')
+        return &haystack[strlen(haystack)-1];//returns last element
+
+    char *result = NULL;
+    while (1) {
+        char *p = strstr(haystack, needle);
+        if (p == NULL)
+            break;
+        result = p;
+        haystack = p + 1;
+    }
+
+    return result;
+}
+
 /*** command ***/
 
 void editorCommandCallback(char *command, int key, int buflen) {
 
     if (key == '\x1b') return;
-    else  if (key == '\r') {
+    else if (key == '\r') {
         char *space = strstr(command," ");
         size_t command_len;
         if (space > 0)
@@ -759,15 +733,38 @@ void editorCommandCallback(char *command, int key, int buflen) {
             editorSave();
         if (strstr(command_list,"q")) {
             if (E.dirty == 0)   { //if the file has not been modified
+                free(T);
+                free(P);
                 write(STDOUT_FILENO, "\x1b[2J", 4); // clears (whole visible) screen after each keypress (since we call it after each keypress). We remove this to optimize by clearing each line as we draw it.
                 write(STDOUT_FILENO, "\x1b[H", 3);
                 exit(0);
             } else if (E.dirty != 0 && (strstr(command_list, "!")-command_list == buflen -1)) { //we are sure that the user wants to close, in spite of having modified the file.
+                free(T);
+                free(P);
                 write(STDOUT_FILENO, "\x1b[2J", 4); // clears (whole visible) screen after each keypress (since we call it after each keypress). We remove this to optimize by clearing each line as we draw it.
                 write(STDOUT_FILENO, "\x1b[H", 3);
                 exit(0);
             }   else
                 editorSetStatusMessage("File has been modified, to force closure include ! at the END of the command.");
+        }
+        if (mode == COMMAND_MODE && strcmp(command_list,"np") == 0)  {
+            paginated = PAGINATED;
+            mode = TREE_MODE;
+            saved_ry = E.ry;
+            saved_cy = E.cy;
+            E.cy = E.cy-E.ry;
+            E.ry = 0;
+            P = paginate(directory);
+            treelength = pagelen(P);
+        }   else if (mode == COMMAND_MODE && strstr(command_list,"n")) {
+            paginated = BRANCHED;
+            mode = TREE_MODE;
+            saved_ry = E.ry;
+            saved_cy = E.cy;
+            E.cy = E.cy-E.ry;
+            E.ry = 0;
+            T = generate_tree(directory);
+            treelength = treelen(T);
         }
         return;
     }
@@ -777,18 +774,6 @@ void editorCommand() {
     char *command = editorPrompt(":%s",COMMAND_BOOL,editorCommandCallback);
     free(command);
 }
-
-/*** append buffer ***/
-
-struct abuf { //We make a single character array, so we can then write everything at once rather than writing each character individually
-    char *b; //Pointer to our memory buffer
-    int len;
-};
-
-#define ABUF_INIT {NULL,0}; //empty buffer, acts as constructor for abuf type
-
-//We want one write that append strings to a buffer and then write it in one go.
-// This buffer acts like a dynamic string which supports appending, which is not supported in C.
 
 void abAppend(struct abuf *ab, const char *s, int len) {
 
@@ -825,14 +810,14 @@ void editorScroll() { //we call this at start of refresh
     if (E.rx < E.coloff) { //scroll left
         E.coloff = E.rx;
     }
-    if (E.rx >= E.coloff + E.screencols - NUM_PADDING)  { //scroll right
-        E.coloff = E.rx - E.screencols + 1 + NUM_PADDING; //add padding so we don't go back to it.
+    if (E.rx >= E.coloff + E.screencols - NUM_PADDING - (mode == TREE_MODE ? TREE_PADDING : 0))  { //scroll right
+        E.coloff = E.rx - E.screencols + 1 + NUM_PADDING + (mode == TREE_MODE ? TREE_PADDING : 0); //add padding so we don't go back to it.
     }
 }
 
 void editorDrawRows(struct abuf *ab) {
-    int y;
-    for (y = 0; y < E.screenrows; y++) { //currently 24 since number of rows is unknown
+
+    for (int y = 0; y < E.screenrows; y++) { //currently 24 since number of rows is unknown
         int filerow = y + E.rowoff;
         if (filerow >= E.numrows) { //any line we are drawing that is over the text file length will have a ~ at the start, or if we are on startup
             
@@ -849,10 +834,80 @@ void editorDrawRows(struct abuf *ab) {
                 while (padding--) abAppend(ab," ",1);
                 abAppend(ab,welcome,welcomelen);
             } else {
+
+                if (mode == TREE_MODE)  {
+                    char treebuf[50];
+                    int fill = 0;
+                    switch (paginated)  {
+                        case PAGINATED:
+                            if (y < P->num_folders) {
+                                fill = snprintf(treebuf,sizeof(treebuf)," %s",P->subfolders[y]); 
+                                break;
+                            }  else if (y >= P->num_folders && y-P->num_folders < P->num_files) {
+                                fill = snprintf(treebuf,sizeof(treebuf)," %s",P->files[y-P->num_folders]);
+                                break;
+                            }   else break;
+                        case BRANCHED:
+                            if (y < T->num_folders) {
+                                fill = snprintf(treebuf,sizeof(treebuf)," %s",T->folders[y]->name);
+                                break;
+                            } else if (y >= T->num_folders && y-T->num_folders < T->num_files) {
+                                fill = snprintf(treebuf,sizeof(treebuf)," %s", T->file_list[y-T->num_folders].name);
+                                break;
+                            }   else break;
+                        default:
+                            break;
+                    }
+                    
+                    char space[TREE_PADDING-fill];
+                    memset(space,' ',TREE_PADDING-fill-1);
+                    
+                    if (y == E.ry) abAppend(ab , "\x1b[7m", 4);
+                    abAppend(ab,treebuf,fill);
+                    abAppend(ab,space,TREE_PADDING-fill-1);
+                    abAppend(ab , "\x1b[7m", 4);
+                    abAppend(ab , "+", 1);
+                    abAppend(ab , "\x1b[m", 3);
+                }
                 abAppend(ab,"~",1); //draws the tilde at the start of each row
             }
         
         }   else {
+
+            if (mode == TREE_MODE)  {
+                char treebuf[50];
+                int fill = 0;
+                switch (paginated)  {
+                    case PAGINATED:
+                        if (y < P->num_folders) {
+                            fill = snprintf(treebuf,sizeof(treebuf)," %s",P->subfolders[y]); 
+                            break;
+                        }  else if (y >= P->num_folders && y-P->num_folders < P->num_files) {
+                            fill = snprintf(treebuf,sizeof(treebuf)," %s",P->files[y-P->num_folders]);
+                            break;
+                        }   else break;
+                    case BRANCHED:
+                        if (y < T->num_folders) {
+                            fill = snprintf(treebuf,sizeof(treebuf)," %s",T->folders[y]->name);
+                            break;
+                        } else if (y >= T->num_folders && y-T->num_folders < T->num_files) {
+                            fill = snprintf(treebuf,sizeof(treebuf)," %s", T->file_list[y-T->num_folders].name);
+                            break;
+                        }   else break;
+                    default:
+                        break;
+                }
+                
+                char space[TREE_PADDING-fill];
+                memset(space,' ',TREE_PADDING-fill-1);
+                
+                if (y == E.ry) abAppend(ab , "\x1b[7m", 4);
+                abAppend(ab,treebuf,fill);
+                abAppend(ab,space,TREE_PADDING-fill-1);
+                abAppend(ab , "\x1b[7m", 4);
+                abAppend(ab , "+", 1);
+                abAppend(ab , "\x1b[m", 3);
+            }
 
             char nbuf[10];
             int row = y-E.ry;
@@ -862,7 +917,7 @@ void editorDrawRows(struct abuf *ab) {
 
             int len = E.row[filerow].rsize - E.coloff;
             if (len < 0) len = 0; //since len can be negative if we have scroll to the right enough
-            if (len > E.screencols - NUM_PADDING + 1) len = E.screencols - NUM_PADDING + 1; //truncate  the text
+            if (len > E.screencols - NUM_PADDING - (mode == TREE_MODE ? TREE_PADDING : 0) + 1) len = E.screencols - NUM_PADDING - (mode == TREE_MODE ? TREE_PADDING : 0) + 1; //truncate  the text
             
             char *c = &E.row[filerow].render[E.coloff]; //the rendered text of filerow-th row into ab
             //the E.coloff index for chars will make the text start from the coloff-th column.
@@ -909,7 +964,7 @@ void editorDrawRows(struct abuf *ab) {
 void editorDrawStatusBar(struct abuf *ab)   {
     abAppend(ab , "\x1b[7m", 4); //this command invert the colors for the text after
     char status[80], rstatus[80];
-    int len = snprintf(status, sizeof(status), " %.20s - %d lines %s%s", E.filename ? E.filename : "[No Name]", E.numrows, E.dirty ? "(modified) " : "", E.mode == COMMAND_MODE ? "| Command Mode" : "| Edit Mode");
+    int len = snprintf(status, sizeof(status), " %.20s - %d lines %s%s", E.filename ? E.filename : "[No Name]", E.numrows, E.dirty ? "(modified) " : "", mode == COMMAND_MODE ? "| Command Mode" : "| Edit Mode");
     int rlen = snprintf(rstatus, sizeof(rstatus), "%s | %d/%d ", E.syntax ? E.syntax->filetype : "no ft", E.cy+1, E.numrows); //indicator of percentage 
     if (len > E.screencols) len = E.screencols;
     abAppend(ab, status, len);
@@ -950,11 +1005,11 @@ void editorRefreshScreen() { //refresh occurs after all processing of inputs has
     editorDrawMessageBar(&ab);
 
     char buf[32];
-    snprintf(buf,sizeof(buf),"\x1b[%d;%dH", E.ry + 1, (E.rx - E.coloff) + NUM_PADDING); //adds the position of the cursor that we want, to a buf, which we can then add to the end of ab to set the mouse position.
+    snprintf(buf,sizeof(buf),"\x1b[%d;%dH", E.ry + 1, (E.rx - E.coloff) + NUM_PADDING + (mode == TREE_MODE ? TREE_PADDING : 0)); //adds the position of the cursor that we want, to a buf, which we can then add to the end of ab to set the mouse position.
     abAppend(&ab, buf, strlen(buf)); //we add the buffer then to the string to move the cursor during refresh
     //snprintf prints a string in a given format to a specified length
 
-    abAppend(&ab,"\x1b[?25h", 6); // unhide cursor
+    if (mode != TREE_MODE) abAppend(&ab,"\x1b[?25h", 6); // unhide cursor
 
     //we have essentially added all the instances of what we want to write on screen into a single string
     //so then we can print everything at once, rather than writing each character one at a time.
@@ -1036,13 +1091,13 @@ void editorMoveCursor(int key) { //int because we have associated each keypress 
             }
             break;
         case ARROW_UP:
-            if (E.cy != 0) {
+            if ((mode != TREE_MODE && E.cy != 0) || (mode == TREE_MODE && E.ry != 0)) {
                 E.cy--;
                 E.ry--;
             }
             break;
         case ARROW_DOWN:
-            if (E.cy < E.numrows) {
+            if ((mode == TREE_MODE && E.ry < treelength-1) || (mode != TREE_MODE && E.cy < E.numrows)) {
                 E.cy++;
                 if (E.ry < E.screenrows - 1)
                     E.ry++;
@@ -1057,27 +1112,15 @@ void editorMoveCursor(int key) { //int because we have associated each keypress 
     }
 }
 
-/** edit mode **/
+/** keypress processing **/
 
 void editorProcessKeypress() { // function for mapping keypress to given actions.
-    static int quit_times = PICO_QUIT_TIMES;
 
     int c = editorReadKey();//waits for keypress, editor ReadKey will send it here
     switch (c) {
 
         case '\r':
             editorInsertNewLine();
-            break;
-
-        case CTRL_KEY('q'):
-            if (E.dirty && quit_times > 0)  {
-                editorSetStatusMessage("WARNING!!! File has unsaved changes. Press Ctrl-Q %d more times to quit.", quit_times);
-                quit_times--;
-                return;
-            }
-            write(STDOUT_FILENO, "\x1b[2J", 4); // clears (whole visible) screen after each keypress (since we call it after each keypress). We remove this to optimize by clearing each line as we draw it.
-            write(STDOUT_FILENO, "\x1b[H", 3);
-            exit(0);
             break;
 
         case CTRL_KEY('s'):
@@ -1127,7 +1170,7 @@ void editorProcessKeypress() { // function for mapping keypress to given actions
 
         case CTRL_KEY('l'):
         case '\x1b':
-            E.mode = COMMAND_MODE;
+            mode = COMMAND_MODE;
             break;
 
         default:
@@ -1135,22 +1178,13 @@ void editorProcessKeypress() { // function for mapping keypress to given actions
             break;
     }
 
-    quit_times = PICO_QUIT_TIMES;
 }
-
-/** normal mode **/
 
 void commandProcessKeypress() {
     
     int c = editorReadKey();
 
     switch (c) {
-
-        case CTRL_KEY('q'):
-            write(STDOUT_FILENO, "\x1b[2J", 4); // clears (whole visible) screen after each keypress (since we call it after each keypress). We remove this to optimize by clearing each line as we draw it.
-            write(STDOUT_FILENO, "\x1b[H", 3);
-            exit(0);
-            break;
 
         case ARROW_DOWN:
         case 'j':
@@ -1170,7 +1204,7 @@ void commandProcessKeypress() {
             break;
             
         case 'i':
-            E.mode = EDIT_MODE;
+            mode = EDIT_MODE;
             break;
 
         case ':':
@@ -1181,6 +1215,77 @@ void commandProcessKeypress() {
             break;
     }
 
+}
+
+void treeProcessKeypress()   {
+    int c = editorReadKey();
+
+    switch (c) {
+
+        case ARROW_DOWN:
+        case 'j':
+            editorMoveCursor(ARROW_DOWN);
+            break;
+        case ARROW_UP:
+        case 'k':
+            editorMoveCursor(ARROW_UP);
+            break;
+            
+        case 'i':
+            mode = EDIT_MODE;
+            break;
+        case ':':
+            editorCommand();
+            break;
+        
+        case BACKSPACE:
+            if (paginated == PAGINATED) {
+                char new_directory[50];
+                if (directory[strlen(directory)-2] == '.')  {
+                    snprintf(new_directory,sizeof(new_directory),".%s",directory);
+
+                }   else    {
+                    directory[strlen(directory)-1] = '\0'; //remove last /
+                    char *last_folder = rstrstr(directory,"/"); //find second to last
+                    memset(new_directory,'\0',sizeof(new_directory));
+                    memcpy(new_directory,directory,last_folder-directory+1); //find last
+                }
+                P = paginate(new_directory);
+                treelength = pagelen(P);
+                memcpy(directory,new_directory,sizeof(new_directory));
+            }
+            break;
+
+        case '\r':
+            if (paginated == PAGINATED) {
+                if (E.ry < P->num_folders)  {
+                    char new_directory[MAX_PATH_LEN];
+                    snprintf(new_directory,sizeof(new_directory),"%s%s/",directory,P->subfolders[E.ry]);
+                    P = paginate(new_directory);
+                    treelength = pagelen(P);
+                    memcpy(directory,new_directory,sizeof(new_directory));
+                    break;
+                } else  {
+                    editorSave();
+                    char new_filepath[MAX_PATH_LEN];
+                    snprintf(new_filepath,sizeof(new_filepath),"%s%s",directory,P->files[E.ry-P->num_folders]);
+                    initEditor();
+                    editorOpen(new_filepath);
+                    mode = COMMAND_MODE;
+                    editorRefreshScreen();
+                    break;
+                }
+            }
+
+        case '\x1b':
+            E.ry = saved_ry; //we have saved the value so we can return the to the line we were on before we accessed the tree
+            E.cy = saved_cy;
+            mode = COMMAND_MODE;
+            break;
+
+        default:
+            break;
+    }
 }
 
 /*** init ***/
@@ -1199,8 +1304,8 @@ void initEditor() {
     E.filename = NULL;
     E.statusmsg[0] = '\0';
     E.statusmsg_time = 0;
-    E.mode = COMMAND_MODE;
     E.syntax = NULL; //since filetype unknown, we don't highlight
+    paginated = PAGINATED;
 
     if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
     E.screenrows -= 2; //removing screenline limit to add status bar and message bar
@@ -1216,7 +1321,17 @@ int main(int argc, char *argv[]) {
 
     while (1) {
         editorRefreshScreen();
-        E.mode == COMMAND_MODE ? commandProcessKeypress() : editorProcessKeypress(); //stops here until a key is pressed
+        switch (mode)   {
+            case COMMAND_MODE:
+                commandProcessKeypress();
+                continue;
+            case TREE_MODE:
+                treeProcessKeypress();
+                continue;
+            case EDIT_MODE:
+                editorProcessKeypress(); 
+                continue;
+        }
     }
     return 0;
 }
