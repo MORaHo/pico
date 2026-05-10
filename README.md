@@ -13,8 +13,7 @@ This is currently similar to what is found on the guide, but I hope to developme
 ## (Currently) Supported commands
 - w
 - q (and q!)
-- np (paginated tree-view, currently working on implementing a branched tree-view)
+- n (document tree-view, shows only contents of folder which is in focus)
 
 ## Problems
-- Branched view is currently accessible but functionality is limited
 - Tree-view cannot extend to and past .../ , but there is a possible solution to the issue.

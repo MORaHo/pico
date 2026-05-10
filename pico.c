@@ -67,7 +67,7 @@ char *C_HL_keywords[] = {
 char *PY_HL_extensions[] = {".py",NULL};
 char *PY_HL_keywords[] = {
     "if", "while", "for", "match", "case", "from", "import", "as", "return", "else", "elif", "try", "except", "raise", "in"
-    "not|", "lambda|", "self|", "in|", "and|", "def|", "class|", "or|", "is|", "True|", "False|", 
+    "not|", "lambda|", "self|", "in|", "and|", "def|", "class|", "or|", "is|", "True|", "False|",
 };
 
 struct editorSyntax HLDB[] = { //Array of editorSyntax structs
@@ -226,7 +226,7 @@ void editorUpdateSyntax(erow *row)  {
     char *scs = E.syntax->singleline_comment_start;
     char *mcs = E.syntax->multiline_comment_start;
     char *mce = E.syntax->multiline_comment_end;
-    
+
     int scs_len = scs ? strlen(scs) : 0; //check if there is effectively a way to write a comment
     int mcs_len = mcs ? strlen(mcs) : 0;
     int mce_len = mce ? strlen(mce) : 0;
@@ -270,14 +270,14 @@ void editorUpdateSyntax(erow *row)  {
 
         if (E.syntax->flags & HL_HIGHLIGHT_STRINGS) {
             if (in_string)  {
-                
+
                 row->hl[i] = HL_STRING;
                 if (c == '\\' && i + 1 < row->rsize)    { //this is to take care of cases where there are escape quotes within a string.
                     row->hl[i+1] = HL_STRING;
                     i+= 2; //2 since also take care of the character after.
                     continue;
                 }
-                
+
                 if (c == in_string) in_string = 0; //if the character matches the quote type with which we start a string, then we end the quote
                 i++;
                 prev_sep = 1; //if we are done highlighting, the quote can be seen as a separator.
@@ -406,16 +406,16 @@ void editorUpdateRow(erow *row) {
         if (row->chars[j] == '\t') tabs++;
 
     free(row->render);
-    row->render = malloc(row->size+tabs*(PICO_TAB_STOP-1) + 1); //allocating space for tabs, since \t already occupies one byte, all we need it to 
+    row->render = malloc(row->size+tabs*(PICO_TAB_STOP-1) + 1); //allocating space for tabs, since \t already occupies one byte, all we need it to
 
     int idx = 0;
     for (j = 0; j<row->size; j++) {
-        
+
         if (row->chars[j] == '\t') { //because tab moves the mouse cursor, just like \r\n and doesn't effectively add any characters, so it never removes the text behind it, so we have to render it on our own.
-            
+
             row->render[idx++] = ' ';
             while (idx % PICO_TAB_STOP != 0) row->render[idx++] = ' '; //we never reset idx because we increase idx as we count, so even if it is 0, after the check it is ticked up and we have to add up to another7 to end the loop
-        
+
         }   else {
             row->render[idx++] = row->chars[j];
         }
@@ -494,7 +494,7 @@ void editorRowAppendString(erow *row, char *s, size_t len)  {
 }
 
 void editorRowDelChar(erow *row, int at)    {
-    
+
     if (at < 0 || at >= row->size) return;
     memmove(&row->chars[at], &row->chars[at + 1], row->size - at); //we just move the characters after one position back, and we don't need space for the null byte since it creates itself.
     row->size--;
@@ -507,7 +507,7 @@ void editorRowDelChar(erow *row, int at)    {
 
 void editorInsertChar(int c) {
     if (E.cy == E.numrows) editorInsertRow(E.numrows,"",0); //adds row to the end if we are at tilde row
-    editorRowInsertChar(&E.row[E.cy],E.cx,c); 
+    editorRowInsertChar(&E.row[E.cy],E.cx,c);
     E.cx++;
 }
 
@@ -538,7 +538,7 @@ void editorDelChar() {
         E.cx = E.row[E.cy - 1].size;
         editorRowAppendString(&E.row[E.cy-1],row->chars,row->size);
         editorDelRow(E.cy);
-        E.cy--; 
+        E.cy--;
         E.ry--;
     }
 }
@@ -555,7 +555,7 @@ char *editorRowsToString(int *buflen)   {
 
     char *buf = malloc(totlen);
     char *p = buf;
-    
+
     for (j = 0; j < E.numrows; j++) {
         memcpy(p, E.row[j].chars, E.row[j].size);
         p += E.row[j].size; //pointer math
@@ -579,7 +579,7 @@ void editorOpen(char *filename) { //This function initialized all the rows at th
     char *line = NULL; //char* makes this read only, instead char[] creates a copy in the stack and allows write
     size_t linecap = 0; //default value since linecap will be allocated by linecap
     ssize_t linelen; // signed size_t, which is a signed version of a type that is used to represent the size of allocated block of memory.
-    
+
     // getline(&buffer,&size,stdin); -> buffer where text is store, size of input buffer, and input file. Useful sinc we don't know how much memory to allocate for each line. getline returns -1 when it gets to the end of the file
     while((linelen = getline(&line,&linecap,fp)) != -1) {
         while (linelen > 0 && (line[linelen-1] == '\n' || line[linelen-1] == '\r'))
@@ -638,7 +638,7 @@ void editorFindCallback(char *query, int key, int buflen)   {
         free(saved_hl);
         saved_hl = NULL;
     }
-    
+
     if (key == '\r' || key == '\x1b') { //if Esc or Enter are pressed, then search is cancelled, and we reset the search parameters.
         last_match = -1;
         direction = 1;
@@ -656,19 +656,19 @@ void editorFindCallback(char *query, int key, int buflen)   {
     int current = last_match; //index of current search row
     int i;
     for (i = 0; i < E.numrows; i++) { //when arrow as slicked they are a keypress, so this function resets, so it won't run out
-        
+
         current += direction; //search is not independent of i, so we can start from where last left off.
         if (current == -1) current = E.numrows -1; //allows wrap around search
         else if (current == E.numrows) current = 0;
         erow *row = &E.row[current];
         char *match = strstr(row->render, query); //checks if query is present in row->render, and returns pointer to matching substring
-        
+
         if (match) {
             last_match = current;
             E.cy = current;
             E.cx = editorRowRxtoCx(row, match - row->render); //since we use strstr on row->render, the pointer math be correct for render, but not chars, so we have to convert.
             E.rowoff = E.numrows; //we do this so that editscroll will scroll upwards until the matchinng line is at the top of the screen.
-            
+
             saved_hl_line = current;
             saved_hl = malloc(row->rsize); //we save this, so we can restore it later.
             memcpy(saved_hl, row->hl , row->rsize);
@@ -724,7 +724,7 @@ void editorCommandCallback(char *command, int key, int buflen) {
         size_t command_len;
         if (space > 0)
             command_len = space - command;
-        else 
+        else
             command_len = (size_t) buflen;
         char *command_list = malloc(command_len);
         command_list = command;
@@ -747,8 +747,7 @@ void editorCommandCallback(char *command, int key, int buflen) {
             }   else
                 editorSetStatusMessage("File has been modified, to force closure include ! at the END of the command.");
         }
-        if (mode == COMMAND_MODE && strcmp(command_list,"np") == 0)  {
-            paginated = PAGINATED;
+        if (mode == COMMAND_MODE && strcmp(command_list,"n") >= 0)  {
             mode = TREE_MODE;
             saved_ry = E.ry;
             saved_cy = E.cy;
@@ -756,15 +755,6 @@ void editorCommandCallback(char *command, int key, int buflen) {
             E.ry = 0;
             P = paginate(directory);
             treelength = pagelen(P);
-        }   else if (mode == COMMAND_MODE && strstr(command_list,"n")) {
-            paginated = BRANCHED;
-            mode = TREE_MODE;
-            saved_ry = E.ry;
-            saved_cy = E.cy;
-            E.cy = E.cy-E.ry;
-            E.ry = 0;
-            T = generate_tree(directory);
-            treelength = treelen(T);
         }
         return;
     }
@@ -793,7 +783,7 @@ void abFree(struct abuf *ab) { //destructor for the string
 /*** output ***/
 
 void editorScroll() { //we call this at start of refresh
-    
+
     E.rx = 0;
     if (E.cy < E.numrows)   {
         E.rx = editorRowCxToRx(&E.row[E.cy],E.cx); //this allows us to skip to the end of a tab
@@ -820,7 +810,7 @@ void editorDrawRows(struct abuf *ab) {
     for (int y = 0; y < E.screenrows; y++) { //currently 24 since number of rows is unknown
         int filerow = y + E.rowoff;
         if (filerow >= E.numrows) { //any line we are drawing that is over the text file length will have a ~ at the start, or if we are on startup
-            
+
             if (E.numrows == 0 && y == E.screenrows / 3) { //writing welcome message branch
                 char welcome[80];
                 int welcomelen = snprintf(welcome, sizeof(welcome),
@@ -838,30 +828,18 @@ void editorDrawRows(struct abuf *ab) {
                 if (mode == TREE_MODE)  {
                     char treebuf[50];
                     int fill = 0;
-                    switch (paginated)  {
-                        case PAGINATED:
-                            if (y < P->num_folders) {
-                                fill = snprintf(treebuf,sizeof(treebuf)," %s",P->subfolders[y]); 
-                                break;
-                            }  else if (y >= P->num_folders && y-P->num_folders < P->num_files) {
-                                fill = snprintf(treebuf,sizeof(treebuf)," %s",P->files[y-P->num_folders]);
-                                break;
-                            }   else break;
-                        case BRANCHED:
-                            if (y < T->num_folders) {
-                                fill = snprintf(treebuf,sizeof(treebuf)," %s",T->folders[y]->name);
-                                break;
-                            } else if (y >= T->num_folders && y-T->num_folders < T->num_files) {
-                                fill = snprintf(treebuf,sizeof(treebuf)," %s", T->file_list[y-T->num_folders].name);
-                                break;
-                            }   else break;
-                        default:
-                            break;
-                    }
-                    
+                    if (y < P->num_folders) {
+                        fill = snprintf(treebuf,sizeof(treebuf)," %s",P->subfolders[y]);
+                        break;
+                    }  else if (y >= P->num_folders && y-P->num_folders < P->num_files) {
+                        fill = snprintf(treebuf,sizeof(treebuf)," %s",P->files[y-P->num_folders]);
+                        break;
+                    }   else break;
+
+
                     char space[TREE_PADDING-fill];
                     memset(space,' ',TREE_PADDING-fill-1);
-                    
+
                     if (y == E.ry) abAppend(ab , "\x1b[7m", 4);
                     abAppend(ab,treebuf,fill);
                     abAppend(ab,space,TREE_PADDING-fill-1);
@@ -871,36 +849,20 @@ void editorDrawRows(struct abuf *ab) {
                 }
                 abAppend(ab,"~",1); //draws the tilde at the start of each row
             }
-        
+
         }   else {
 
             if (mode == TREE_MODE)  {
                 char treebuf[50];
                 int fill = 0;
-                switch (paginated)  {
-                    case PAGINATED:
-                        if (y < P->num_folders) {
-                            fill = snprintf(treebuf,sizeof(treebuf)," %s",P->subfolders[y]); 
-                            break;
-                        }  else if (y >= P->num_folders && y-P->num_folders < P->num_files) {
-                            fill = snprintf(treebuf,sizeof(treebuf)," %s",P->files[y-P->num_folders]);
-                            break;
-                        }   else break;
-                    case BRANCHED:
-                        if (y < T->num_folders) {
-                            fill = snprintf(treebuf,sizeof(treebuf)," %s",T->folders[y]->name);
-                            break;
-                        } else if (y >= T->num_folders && y-T->num_folders < T->num_files) {
-                            fill = snprintf(treebuf,sizeof(treebuf)," %s", T->file_list[y-T->num_folders].name);
-                            break;
-                        }   else break;
-                    default:
-                        break;
-                }
-                
+                if (y < P->num_folders) 
+                    fill = snprintf(treebuf,sizeof(treebuf)," %s",P->subfolders[y]);
+                else if (y >= P->num_folders && y-P->num_folders < P->num_files) 
+                    fill = snprintf(treebuf,sizeof(treebuf)," %s",P->files[y-P->num_folders]);
+
                 char space[TREE_PADDING-fill];
                 memset(space,' ',TREE_PADDING-fill-1);
-                
+
                 if (y == E.ry) abAppend(ab , "\x1b[7m", 4);
                 abAppend(ab,treebuf,fill);
                 abAppend(ab,space,TREE_PADDING-fill-1);
@@ -918,7 +880,7 @@ void editorDrawRows(struct abuf *ab) {
             int len = E.row[filerow].rsize - E.coloff;
             if (len < 0) len = 0; //since len can be negative if we have scroll to the right enough
             if (len > E.screencols - NUM_PADDING - (mode == TREE_MODE ? TREE_PADDING : 0) + 1) len = E.screencols - NUM_PADDING - (mode == TREE_MODE ? TREE_PADDING : 0) + 1; //truncate  the text
-            
+
             char *c = &E.row[filerow].render[E.coloff]; //the rendered text of filerow-th row into ab
             //the E.coloff index for chars will make the text start from the coloff-th column.
             //It is as a reference, since adding the [E.coloff] returns the literal value, and we want to pass the pointer to that value, so we can start from there
@@ -929,7 +891,7 @@ void editorDrawRows(struct abuf *ab) {
                 if (iscntrl(c[j])) {
                     char sym = (c[j] <= 26) ? '@' + c[j] : '?'; //we are converting come characters to capital letters, or we are printing a ?
                     abAppend(ab, "\x1b[7m", 4); //inverted colours
-                    abAppend(ab , &sym, 1); 
+                    abAppend(ab , &sym, 1);
                     abAppend(ab, "\x1b[m", 3); //return to normal colours
                     if (current_color != -1) {
                         char buf[16];
@@ -965,7 +927,7 @@ void editorDrawStatusBar(struct abuf *ab)   {
     abAppend(ab , "\x1b[7m", 4); //this command invert the colors for the text after
     char status[80], rstatus[80];
     int len = snprintf(status, sizeof(status), " %.20s - %d lines %s%s", E.filename ? E.filename : "[No Name]", E.numrows, E.dirty ? "(modified) " : "", mode == COMMAND_MODE ? "| Command Mode" : "| Edit Mode");
-    int rlen = snprintf(rstatus, sizeof(rstatus), "%s | %d/%d ", E.syntax ? E.syntax->filetype : "no ft", E.cy+1, E.numrows); //indicator of percentage 
+    int rlen = snprintf(rstatus, sizeof(rstatus), "%s | %d/%d ", E.syntax ? E.syntax->filetype : "no ft", E.cy+1, E.numrows); //indicator of percentage
     if (len > E.screencols) len = E.screencols;
     abAppend(ab, status, len);
     while (len < E.screencols)  {
@@ -982,7 +944,7 @@ void editorDrawStatusBar(struct abuf *ab)   {
 }
 
 void editorDrawMessageBar(struct abuf *ab)   {
-    
+
     abAppend(ab,"\x1b[K",3); //erases all character from position to end of line
     int msglen = strlen(E.statusmsg);
     if (msglen > E.screencols) msglen = E.screencols; //truncate
@@ -991,9 +953,9 @@ void editorDrawMessageBar(struct abuf *ab)   {
 }
 
 void editorRefreshScreen() { //refresh occurs after all processing of inputs has occured
-    
+
     editorScroll(); //since all inputs have already been processed, we already know the definite position of the mouse
-    
+
     struct abuf ab = ABUF_INIT; //starts with an empty string
 
     abAppend(&ab,"\x1b[?25l", 6); // hides cursor while drawing, so screen doesn't flicker.
@@ -1070,7 +1032,7 @@ char *editorPrompt(char *prompt, char mode_bool, void (*callback)(char *, int, i
 
 void editorMoveCursor(int key) { //int because we have associated each keypress with an enumerated value
     erow *row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy]; //pointer to row of interest
-    
+
     switch(key) {
         case ARROW_LEFT:
             if (E.cx != 0)
@@ -1087,7 +1049,7 @@ void editorMoveCursor(int key) { //int because we have associated each keypress 
             else if (row && E.cx == row->size) {
                 E.cy++; //move to next row
                 E.ry++;
-                E.cx = 0; //and start of 
+                E.cx = 0; //and start of
             }
             break;
         case ARROW_UP:
@@ -1148,7 +1110,7 @@ void editorProcessKeypress() { // function for mapping keypress to given actions
         case PAGE_UP:
         case PAGE_DOWN:
             { //we create a code block, since variable decleration is not possible inside a switch
-                if (c == PAGE_UP) {    
+                if (c == PAGE_UP) {
                     E.cy = E.rowoff; //changes position to the top of the page.
                 }   else if (c == PAGE_DOWN) {
                     E.cy = E.rowoff + E.screenrows - 1; //sets position to bottom of page
@@ -1181,7 +1143,7 @@ void editorProcessKeypress() { // function for mapping keypress to given actions
 }
 
 void commandProcessKeypress() {
-    
+
     int c = editorReadKey();
 
     switch (c) {
@@ -1202,7 +1164,7 @@ void commandProcessKeypress() {
         case 'k':
             editorMoveCursor(ARROW_UP);
             break;
-            
+
         case 'i':
             mode = EDIT_MODE;
             break;
@@ -1210,7 +1172,7 @@ void commandProcessKeypress() {
         case ':':
             editorCommand();
             break;
-        
+
         default:
             break;
     }
@@ -1230,52 +1192,49 @@ void treeProcessKeypress()   {
         case 'k':
             editorMoveCursor(ARROW_UP);
             break;
-            
+
         case 'i':
             mode = EDIT_MODE;
             break;
         case ':':
             editorCommand();
             break;
-        
-        case BACKSPACE:
-            if (paginated == PAGINATED) {
-                char new_directory[50];
-                if (directory[strlen(directory)-2] == '.')  {
-                    snprintf(new_directory,sizeof(new_directory),".%s",directory);
 
-                }   else    {
-                    directory[strlen(directory)-1] = '\0'; //remove last /
-                    char *last_folder = rstrstr(directory,"/"); //find second to last
-                    memset(new_directory,'\0',sizeof(new_directory));
-                    memcpy(new_directory,directory,last_folder-directory+1); //find last
-                }
-                P = paginate(new_directory);
-                treelength = pagelen(P);
-                memcpy(directory,new_directory,sizeof(new_directory));
+        case BACKSPACE:
+            char new_directory[50];
+            if (directory[strlen(directory)-2] == '.')  {
+                snprintf(new_directory,sizeof(new_directory),".%s",directory);
+
+            }   else    {
+                directory[strlen(directory)-1] = '\0'; //remove last /
+                char *last_folder = rstrstr(directory,"/"); //find second to last
+                memset(new_directory,'\0',sizeof(new_directory));
+                memcpy(new_directory,directory,last_folder-directory+1); //find last
             }
+            P = paginate(new_directory);
+            treelength = pagelen(P);
+            memcpy(directory,new_directory,sizeof(new_directory));
             break;
 
         case '\r':
-            if (paginated == PAGINATED) {
-                if (E.ry < P->num_folders)  {
-                    char new_directory[MAX_PATH_LEN];
-                    snprintf(new_directory,sizeof(new_directory),"%s%s/",directory,P->subfolders[E.ry]);
-                    P = paginate(new_directory);
-                    treelength = pagelen(P);
-                    memcpy(directory,new_directory,sizeof(new_directory));
-                    break;
-                } else  {
-                    editorSave();
-                    char new_filepath[MAX_PATH_LEN];
-                    snprintf(new_filepath,sizeof(new_filepath),"%s%s",directory,P->files[E.ry-P->num_folders]);
-                    initEditor();
-                    editorOpen(new_filepath);
-                    mode = COMMAND_MODE;
-                    editorRefreshScreen();
-                    break;
-                }
+            if (E.ry < P->num_folders)  {
+                char new_directory[MAX_PATH_LEN];
+                snprintf(new_directory,sizeof(new_directory),"%s%s/",directory,P->subfolders[E.ry]);
+                P = paginate(new_directory);
+                treelength = pagelen(P);
+                memcpy(directory,new_directory,sizeof(new_directory));
+                break;
+            } else  {
+                editorSave();
+                char new_filepath[MAX_PATH_LEN];
+                snprintf(new_filepath,sizeof(new_filepath),"%s%s",directory,P->files[E.ry-P->num_folders]);
+                initEditor();
+                editorOpen(new_filepath);
+                mode = COMMAND_MODE;
+                editorRefreshScreen();
+                break;
             }
+
 
         case '\x1b':
             E.ry = saved_ry; //we have saved the value so we can return the to the line we were on before we accessed the tree
@@ -1291,7 +1250,7 @@ void treeProcessKeypress()   {
 /*** init ***/
 
 void initEditor() {
-    
+
     E.cx = 0;
     E.cy = 0;
     E.rx = 0;
@@ -1312,7 +1271,7 @@ void initEditor() {
 }
 
 int main(int argc, char *argv[]) {
-    
+
     enableRawMode(); //draw tilde at rows
     initEditor();
     if (argc >= 2) editorOpen(argv[1]);
@@ -1329,7 +1288,7 @@ int main(int argc, char *argv[]) {
                 treeProcessKeypress();
                 continue;
             case EDIT_MODE:
-                editorProcessKeypress(); 
+                editorProcessKeypress();
                 continue;
         }
     }
